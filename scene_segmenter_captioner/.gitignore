@@ -1,0 +1,10 @@
+# Ignore output metadata
+metadata.json
+
+# Ignore all generated keyframes
+frames/
+
+#ignore all mp4 files
+**.mp4
+#ignore python cach files
+**.pyc
