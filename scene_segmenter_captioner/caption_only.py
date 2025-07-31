@@ -1,27 +1,38 @@
-import argparse
+import os
 import json
-from utils.video import extract_frames
 from utils.blip import caption_image
 from utils.similarity import caption_similarity, relevance_to_goal
 import pandas as pd
 
-def run_ingestion(video_path, goal=None, interval=5, similarity_threshold=0.75):
-    frames = extract_frames(video_path, interval_sec=interval)
-    captions = [caption_image(path) for _, path in frames]
+def load_existing_frames(folder="frames"):
+    frames = []
+    for filename in sorted(os.listdir(folder)):
+        if filename.endswith(".jpg"):
+            seconds = int(filename.split("_")[1].split(".")[0])
+            path = os.path.join(folder, filename)
+            frames.append((seconds, path))
+    return frames
+
+def process_existing_frames(goal=None, similarity_threshold=0.75):
+    frames = load_existing_frames()
+    captions = []
+
+    for i, (_, path) in enumerate(frames):
+        print(f"[🔎] Captioning {i+1}/{len(frames)}: {path}")
+        caption = caption_image(path)
+        captions.append(caption)
 
     segments = []
     prev_caption = captions[0]
     start_time = frames[0][0]
 
     for i in range(1, len(frames)):
-        current_time, frame_path = frames[i]
+        current_time, _ = frames[i]
         similarity = caption_similarity(prev_caption, captions[i])
-        
         if similarity < similarity_threshold:
             segment = {
                 "start": start_time,
                 "end": current_time,
-                "timestamp": seconds_to_timestamp(start_time),
                 "caption": prev_caption,
                 "key_frame": frames[i-1][1]
             }
@@ -30,18 +41,16 @@ def run_ingestion(video_path, goal=None, interval=5, similarity_threshold=0.75):
             segments.append(segment)
             start_time = current_time
             prev_caption = captions[i]
-    
-    # Add final segment
+
+    # Final segment
     segments.append({
         "start": start_time,
         "end": frames[-1][0],
-        "timestamp": seconds_to_timestamp(start_time),
         "caption": captions[-1],
         "key_frame": frames[-1][1],
         "relevance": relevance_to_goal(captions[-1], goal) if goal else None
     })
 
-    # Optional filtering
     if goal:
         segments = [s for s in segments if s["relevance"] > 0.5]
 
@@ -50,19 +59,13 @@ def run_ingestion(video_path, goal=None, interval=5, similarity_threshold=0.75):
     df = pd.DataFrame(segments)
     df.to_csv("scene_metadata.csv", index=False)
     print(f"[📄] Also saved scene metadata to scene_metadata.xlsx")
-    
-    print(f"[✔] Saved {len(segments)} segments to metadata.json")
-def seconds_to_timestamp(seconds):
-    hrs = seconds // 3600
-    mins = (seconds % 3600) // 60
-    secs = seconds % 60
-    return f"{int(hrs):02}:{int(mins):02}:{int(secs):02}"
+
+    print(f"[✅] Wrote {len(segments)} segments to metadata.json")
 
 if __name__ == "__main__":
+    import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--video_path", required=True)
-    parser.add_argument("--goal", help="Optional prompt to focus on")
-    parser.add_argument("--frame_interval", type=int, default=5)
+    parser.add_argument("--goal", help="Optional goal prompt", default=None)
     args = parser.parse_args()
 
-    run_ingestion(args.video_path, goal=args.goal, interval=args.frame_interval)
+    process_existing_frames(goal=args.goal)
