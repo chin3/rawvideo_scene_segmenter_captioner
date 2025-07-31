@@ -4,6 +4,11 @@ from utils.video import extract_frames
 from utils.blip import caption_image
 from utils.similarity import caption_similarity, relevance_to_goal
 import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.drawing.image import Image as ExcelImage
+from openpyxl.utils import get_column_letter
+from PIL import Image as PILImage
+import io
 
 def run_ingestion(video_path, goal=None, interval=5, similarity_threshold=0.75):
     frames = extract_frames(video_path, interval_sec=interval)
@@ -47,8 +52,7 @@ def run_ingestion(video_path, goal=None, interval=5, similarity_threshold=0.75):
 
     with open("metadata.json", "w") as f:
         json.dump(segments, f, indent=2)
-    df = pd.DataFrame(segments)
-    df.to_csv("scene_metadata.csv", index=False)
+    export_segments_to_excel_with_images(segments)
     print(f"[📄] Also saved scene metadata to scene_metadata.xlsx")
     
     print(f"[✔] Saved {len(segments)} segments to metadata.json")
@@ -57,6 +61,51 @@ def seconds_to_timestamp(seconds):
     mins = (seconds % 3600) // 60
     secs = seconds % 60
     return f"{int(hrs):02}:{int(mins):02}:{int(secs):02}"
+def export_segments_to_excel_with_images(segments, output_path="scene_metadata.xlsx"):
+    df = pd.DataFrame(segments)
+    df.to_excel(output_path, index=False)
+
+    wb = load_workbook(output_path)
+    ws = wb.active
+
+    key_col_name = "key_frame"
+    if key_col_name not in df.columns:
+        print("❌ No 'key_frame' column found in segments. Cannot embed images.")
+        return
+
+    key_col_index = df.columns.get_loc(key_col_name) + 1
+    col_letter = get_column_letter(key_col_index)
+    ws.column_dimensions[col_letter].width = 25  # adjust if needed
+
+    for i, segment in enumerate(segments):
+        img_path = segment.get("key_frame")
+        row_num = i + 2  # Excel rows are 1-indexed
+
+        if not img_path:
+            continue
+
+        try:
+            pil_img = PILImage.open(img_path)
+            pil_img.thumbnail((160, 90))  # Resize to fit cell nicely
+
+            # Save to memory
+            img_bytes = io.BytesIO()
+            pil_img.save(img_bytes, format="PNG")
+            img_bytes.seek(0)
+            img = ExcelImage(img_bytes)
+
+            # Insert image
+            cell = f"{col_letter}{row_num}"
+            ws.add_image(img, cell)
+
+            # 🔥 Match row height to image height (Excel ≈ pixels * 0.75)
+            ws.row_dimensions[row_num].height = img.height * 0.75
+
+        except Exception as e:
+            print(f"⚠️ Could not embed image at row {row_num}: {e}")
+
+    wb.save(output_path)
+    print(f"[🖼️] Excel file saved with embedded thumbnails → {output_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
